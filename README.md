@@ -21,8 +21,8 @@ You must have CMake and a C++17 compatible compiler installed.
 ### 1. Clone the repository
 
 ```bash
-git clone [your-repo-url]
-cd [your-project-directory]
+git clone https://github.com/edwi-n/chat-server
+cd chat-server
 ```
 
 ### 2. Create a build directory
