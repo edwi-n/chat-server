@@ -4,13 +4,15 @@ A multi-client, real-time TCP chat server using Asio library.
 
 ## Features
 
-Asynchronous:: Built using Asio's io_context and asynchronous callbacks.
+Asynchronous: Built using Asio's io_context and asynchronous callbacks.
 
 Multi-Client: Handles numerous concurrent client connections.
 
 Real-time Broadcasting: Messages sent by one client are instantly broadcast to all other connected clients.
 
-Write Queue: Implements a message queue (std::deque) for each client to safely handle messages and prevents data corruption or overrides
+Ring Buffers: Uses bounded circular buffers for incoming data and outgoing messages so each session can safely handle async reads and writes.
+
+Username Join: The first non-empty line from a client becomes the username, so a session does not join the room until it has identified itself.
 
 
 
@@ -72,7 +74,7 @@ telnet localhost 8080
 
 Open several terminal windows and run the command above in each.
 
-The first line you type in each window will become your username.
+The first non-empty line you type in each window will become your username.
 
 Any message you send after that will be broadcast to all other windows!
 
