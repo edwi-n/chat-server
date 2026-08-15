@@ -12,11 +12,13 @@ Multi-Client: Handles numerous concurrent client connections.
 
 Real-time Broadcasting: Messages sent by one client are instantly broadcast to all other connected clients.
 
-Ring Buffers: Uses bounded circular buffers for incoming data and outgoing messages so each session can safely handle async reads and writes.
+Atomic Ring Buffers: Uses bounded atomic ring buffers for incoming data and outgoing messages inside each session.
 
 Thread-Safe Room List: Protects the active-client set with a shared mutex and snapshots recipients before broadcasting.
 
 Session Serialization: Uses a strand per client so its socket state and buffers stay consistent across worker threads.
+
+Note: The buffers are lock-free at the ring-buffer level, but the server as a whole is still not fully lock-free because it uses a strand per session and a shared mutex for the room list.
 
 Username Join: The first non-empty line from a client becomes the username, so a session does not join the room until it has identified itself.
 

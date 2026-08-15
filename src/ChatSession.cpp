@@ -1,7 +1,6 @@
 #include "ChatSession.h"
 #include "ChatRoom.h"
 #include <iostream>
-#include <algorithm>
 
 ChatSession::ChatSession(tcp::socket socket, ChatRoom &room)
     : socket_(std::move(socket)), strand_(asio::make_strand(socket_.get_executor())), room_(room) {}
@@ -16,7 +15,7 @@ void ChatSession::deliver(const std::string &msg)
 {
     asio::post(strand_, [self = shared_from_this(), msg]
                {
-                   if (!self->push_outgoing(msg))
+                   if (!self->write_msgs_.writable_size() || !self->write_msgs_.push(msg))
                    {
                        if (self->joined_)
                        {
@@ -64,7 +63,7 @@ void ChatSession::process_incoming()
 
 void ChatSession::do_read()
 {
-    if (incoming_size_ == incoming_capacity)
+    if (incoming_buffer_.writable_size() == 0)
     {
         if (joined_)
         {
@@ -74,18 +73,29 @@ void ChatSession::do_read()
         return;
     }
 
-    const std::size_t write_index = (incoming_head_ + incoming_size_) % incoming_capacity;
-    const std::size_t contiguous_space = std::min(incoming_capacity - incoming_size_, incoming_capacity - write_index);
+    std::size_t contiguous_space = 0;
+    char *write_buffer = incoming_buffer_.writable_data(contiguous_space);
+
+    if (write_buffer == nullptr || contiguous_space == 0)
+    {
+        if (joined_)
+        {
+            room_.leave(shared_from_this());
+            joined_ = false;
+        }
+
+        return;
+    }
 
     socket_.async_read_some(
-        asio::buffer(&incoming_buffer_[write_index], contiguous_space),
+        asio::buffer(write_buffer, contiguous_space),
         asio::bind_executor(
             strand_,
             [this, self = shared_from_this()](std::error_code ec, std::size_t length)
             {
                 if (!ec)
                 {
-                    incoming_size_ += length;
+                    incoming_buffer_.commit_write(length);
                     process_incoming();
                     do_read();
                 }
@@ -103,7 +113,16 @@ void ChatSession::do_read()
 
 void ChatSession::do_write()
 {
-    if (write_size_ == 0)
+    if (write_msgs_.readable_size() == 0)
+    {
+        writing_ = false;
+        return;
+    }
+
+    std::size_t readable_length = 0;
+    const std::string *message = write_msgs_.readable_data(readable_length);
+
+    if (message == nullptr || readable_length == 0)
     {
         writing_ = false;
         return;
@@ -112,17 +131,16 @@ void ChatSession::do_write()
     writing_ = true;
 
     asio::async_write(socket_,
-                      asio::buffer(write_msgs_[write_head_]),
+                      asio::buffer(*message),
                       asio::bind_executor(
                           strand_,
                           [this, self = shared_from_this()](std::error_code ec, std::size_t)
                           {
                               if (!ec)
                               {
-                                  std::string ignored;
-                                  pop_outgoing(ignored);
+                                  write_msgs_.consume(1);
 
-                                  if (write_size_ > 0)
+                                  if (write_msgs_.readable_size() > 0)
                                   {
                                       do_write();
                                   }
@@ -143,53 +161,26 @@ void ChatSession::do_write()
                           }));
 }
 
-bool ChatSession::push_outgoing(const std::string &msg)
-{
-    if (write_size_ == outgoing_capacity)
-    {
-        return false;
-    }
-
-    const std::size_t write_index = (write_head_ + write_size_) % outgoing_capacity;
-    write_msgs_[write_index] = msg;
-    ++write_size_;
-    return true;
-}
-
-bool ChatSession::pop_outgoing(std::string &msg)
-{
-    if (write_size_ == 0)
-    {
-        return false;
-    }
-
-    msg = std::move(write_msgs_[write_head_]);
-    write_msgs_[write_head_].clear();
-    write_head_ = (write_head_ + 1) % outgoing_capacity;
-    --write_size_;
-    return true;
-}
-
 bool ChatSession::try_pop_incoming_message(std::string &msg)
 {
     msg.clear();
 
-    if (incoming_size_ == 0)
+    const std::size_t available = incoming_buffer_.readable_size();
+
+    if (available == 0)
     {
         return false;
     }
 
-    std::size_t scanned = 0;
-    while (scanned < incoming_size_)
+    for (std::size_t scanned = 0; scanned < available; ++scanned)
     {
-        const char current = incoming_buffer_[(incoming_head_ + scanned) % incoming_capacity];
-        ++scanned;
+        const char current = incoming_buffer_.at(scanned);
 
         if (current == '\n')
         {
-            for (std::size_t i = 0; i < scanned - 1; ++i)
+            for (std::size_t i = 0; i < scanned; ++i)
             {
-                msg.push_back(incoming_buffer_[(incoming_head_ + i) % incoming_capacity]);
+                msg.push_back(incoming_buffer_.at(i));
             }
 
             if (!msg.empty() && msg.back() == '\r')
@@ -197,8 +188,7 @@ bool ChatSession::try_pop_incoming_message(std::string &msg)
                 msg.pop_back();
             }
 
-            incoming_head_ = (incoming_head_ + scanned) % incoming_capacity;
-            incoming_size_ -= scanned;
+            incoming_buffer_.consume(scanned + 1);
             return true;
         }
     }
