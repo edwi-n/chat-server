@@ -29,6 +29,7 @@ private:
     bool try_pop_incoming_message(std::string &msg);
 
     tcp::socket socket_;
+    asio::strand<asio::any_io_executor> strand_;
     ChatRoom &room_;
 
     static constexpr std::size_t incoming_capacity = 4096;

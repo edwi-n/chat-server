@@ -6,11 +6,17 @@ A multi-client, real-time TCP chat server using Asio library.
 
 Asynchronous: Built using Asio's io_context and asynchronous callbacks.
 
+Multithreaded Event Loop: Runs the io_context across a small worker pool so multiple clients can be serviced concurrently.
+
 Multi-Client: Handles numerous concurrent client connections.
 
 Real-time Broadcasting: Messages sent by one client are instantly broadcast to all other connected clients.
 
 Ring Buffers: Uses bounded circular buffers for incoming data and outgoing messages so each session can safely handle async reads and writes.
+
+Thread-Safe Room List: Protects the active-client set with a shared mutex and snapshots recipients before broadcasting.
+
+Session Serialization: Uses a strand per client so its socket state and buffers stay consistent across worker threads.
 
 Username Join: The first non-empty line from a client becomes the username, so a session does not join the room until it has identified itself.
 
@@ -48,6 +54,8 @@ cmake --build .
 ### 5. Running the Server
 
 The executable will be in the build directory.
+
+The server uses a small thread pool internally, so once it starts it can process callbacks on multiple worker threads without additional setup.
 
 
 ```bash

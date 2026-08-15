@@ -4,6 +4,7 @@
 #include <set>
 #include <memory>
 #include <string>
+#include <shared_mutex>
 
 // forward declaration so that ChatSession->deliver can get called
 class ChatSession;
@@ -12,12 +13,13 @@ class ChatSession;
 class ChatRoom
 {
 public:
-          void join(std::shared_ptr<ChatSession> session);
-          void leave(std::shared_ptr<ChatSession> session);
-          void broadcast(const std::string &msg, std::shared_ptr<ChatSession> sender);
+    void join(std::shared_ptr<ChatSession> session);
+    void leave(std::shared_ptr<ChatSession> session);
+    void broadcast(const std::string &msg, std::shared_ptr<ChatSession> sender);
 
 private:
-          std::set<std::shared_ptr<ChatSession>> sessions_; // set of all the sessions
+    std::set<std::shared_ptr<ChatSession>> sessions_; // set of all the sessions
+    mutable std::shared_mutex sessions_mutex_;
 };
 
 #endif

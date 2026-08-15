@@ -4,25 +4,32 @@
 #include <algorithm>
 
 ChatSession::ChatSession(tcp::socket socket, ChatRoom &room)
-    : socket_(std::move(socket)), room_(room) {}
+    : socket_(std::move(socket)), strand_(asio::make_strand(socket_.get_executor())), room_(room) {}
 
 void ChatSession::start()
 {
-    do_read();
+    asio::post(strand_, [self = shared_from_this()]
+               { self->do_read(); });
 }
 
 void ChatSession::deliver(const std::string &msg)
 {
-    if (!push_outgoing(msg))
-    {
-        room_.leave(shared_from_this());
-        return;
-    }
+    asio::post(strand_, [self = shared_from_this(), msg]
+               {
+                   if (!self->push_outgoing(msg))
+                   {
+                       if (self->joined_)
+                       {
+                           self->room_.leave(self);
+                           self->joined_ = false;
+                       }
+                       return;
+                   }
 
-    if (!writing_)
-    {
-        do_write();
-    }
+                   if (!self->writing_)
+                   {
+                       self->do_write();
+                   } });
 }
 
 void ChatSession::process_incoming()
@@ -59,7 +66,11 @@ void ChatSession::do_read()
 {
     if (incoming_size_ == incoming_capacity)
     {
-        room_.leave(shared_from_this());
+        if (joined_)
+        {
+            room_.leave(shared_from_this());
+            joined_ = false;
+        }
         return;
     }
 
@@ -68,23 +79,26 @@ void ChatSession::do_read()
 
     socket_.async_read_some(
         asio::buffer(&incoming_buffer_[write_index], contiguous_space),
-        [this, self = shared_from_this()](std::error_code ec, std::size_t length)
-        {
-            if (!ec)
+        asio::bind_executor(
+            strand_,
+            [this, self = shared_from_this()](std::error_code ec, std::size_t length)
             {
-                incoming_size_ += length;
-                process_incoming();
-                do_read();
-            }
-            else
-            {
-                // remove client from the room bcz they left
-                if (joined_)
+                if (!ec)
                 {
-                    room_.leave(shared_from_this());
+                    incoming_size_ += length;
+                    process_incoming();
+                    do_read();
                 }
-            }
-        });
+                else
+                {
+                    // remove client from the room bcz they left
+                    if (joined_)
+                    {
+                        room_.leave(shared_from_this());
+                        joined_ = false;
+                    }
+                }
+            }));
 }
 
 void ChatSession::do_write()
@@ -99,31 +113,34 @@ void ChatSession::do_write()
 
     asio::async_write(socket_,
                       asio::buffer(write_msgs_[write_head_]),
-                      [this, self = shared_from_this()](std::error_code ec, std::size_t)
-                      {
-                          if (!ec)
+                      asio::bind_executor(
+                          strand_,
+                          [this, self = shared_from_this()](std::error_code ec, std::size_t)
                           {
-                              std::string ignored;
-                              pop_outgoing(ignored);
-
-                              if (write_size_ > 0)
+                              if (!ec)
                               {
-                                  do_write();
+                                  std::string ignored;
+                                  pop_outgoing(ignored);
+
+                                  if (write_size_ > 0)
+                                  {
+                                      do_write();
+                                  }
+                                  else
+                                  {
+                                      writing_ = false;
+                                  }
                               }
                               else
                               {
                                   writing_ = false;
+                                  if (joined_)
+                                  {
+                                      room_.leave(shared_from_this());
+                                      joined_ = false;
+                                  }
                               }
-                          }
-                          else
-                          {
-                              writing_ = false;
-                              if (joined_)
-                              {
-                                  room_.leave(shared_from_this());
-                              }
-                          }
-                      });
+                          }));
 }
 
 bool ChatSession::push_outgoing(const std::string &msg)
